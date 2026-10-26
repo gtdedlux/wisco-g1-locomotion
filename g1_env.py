@@ -200,7 +200,7 @@ class G1Env(gym.Env):
         )
 
         torque_penalty = (
-            0.00001 * mean_tau_sq
+            0.0001 * mean_tau_sq
         )
 
         # Penalize hip roll/yaw deviations that can accompany leg spreading.
