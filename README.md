@@ -41,5 +41,3 @@ python train_ppo.py --checkpoint /path/to/model.zip --timesteps 300000
 ## Progress and Next Steps
 
 The policy has learned to stand, but gradual sideways leg spreading remains an issue. Hip-posture and foot-width penalties have been implemented; the width penalty still needs evaluation.
-
-Next steps are to quantify stance drift, improve sustained balance, test robustness, and progress to slow walking. Stable walking has not yet been achieved.
