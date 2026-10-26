@@ -1,3 +1,4 @@
+# Continues training an existing PPO policy
 from pathlib import Path
 from datetime import datetime
 import argparse
@@ -15,6 +16,7 @@ from g1_env import G1Env
 
 
 def main():
+    # Reads settings: starting checkpoint, additional training steps, episode duration, and foot-width penalty.
     parser = argparse.ArgumentParser(description="Continue standing training in a new run folder.")
     parser.add_argument("--checkpoint", type=Path, default=Path("runs/g1_stand_v2_20261025_205207/g1_ppo_stand_final.zip"))
     parser.add_argument("--timesteps", type=int, default=300_000)
@@ -24,13 +26,13 @@ def main():
     args = parser.parse_args()
     if not args.checkpoint.is_file() or args.timesteps <= 0:
         parser.error("An existing checkpoint and positive timesteps are required")
-    # Each run gets its own folder.
+    # Each run gets its own folder with the changed settings.
     run_dir = (
         Path("runs")
         / f"g1_stand_width_{datetime.now():%Y%m%d_%H%M%S_%f}"
     )
     run_dir.mkdir(parents=True, exist_ok=False)
-
+    # create training and eval envs
     settings = dict(width_penalty_weight=args.width_weight, width_tolerance=args.width_tolerance)
     env = Monitor(G1Env(**settings, episode_seconds=args.episode_seconds), filename=str(run_dir / "train"))
     eval_env = Monitor(G1Env(**settings, episode_seconds=60.0))
@@ -42,13 +44,14 @@ def main():
     assert np.allclose(env.unwrapped.command, 0.0), (
         "Set self.command to [0, 0, 0] in g1_env.py first."
     )
-
+    # saves a checkpoint every 100,000 steps
+    # should be changed based on specific training method/experient idea
     checkpoints = CheckpointCallback(
         save_freq=100_000,
         save_path=str(run_dir / "checkpoints"),
         name_prefix="g1_stand",
     )
-
+    # eval every 50,00 steps to figure out which to save
     evaluation = EvalCallback(
         eval_env,
         best_model_save_path=str(run_dir / "best"),
@@ -62,7 +65,7 @@ def main():
     )
 
     checkpoint = args.checkpoint
-
+    # load the policy
     model = PPO.load(
         str(checkpoint),
         env=env,
@@ -73,7 +76,8 @@ def main():
     model.verbose = 1
 
     print(f"Saving this run to: {run_dir.resolve()}")
-
+    # additional training to learn
+    # ppo collects the experiences and updates neural net
     try:
         model.learn(
             total_timesteps=args.timesteps,  # Additional training steps

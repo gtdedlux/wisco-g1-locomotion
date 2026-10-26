@@ -1,3 +1,5 @@
+# To load a trained policy and display how it controls the robot
+
 import time
 import argparse
 
