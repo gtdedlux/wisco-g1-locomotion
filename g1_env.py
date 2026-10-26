@@ -1,3 +1,5 @@
+# The robot’s training environment
+
 import os
 
 import gymnasium as gym
@@ -5,21 +7,23 @@ from gymnasium import spaces
 import mujoco
 import numpy as np
 
-
+# runs when env = G1Env() to create environment
 class G1Env(gym.Env):
+# configured variables for different feet sliding penalties in various experiments
 
     def __init__(self, width_penalty_weight=0.0, width_tolerance=0.1,
                  episode_seconds=10.0):
 
         if width_penalty_weight < 0 or width_tolerance < 0 or episode_seconds <= 0:
             raise ValueError("Invalid width penalty or episode duration")
-
+        # to load the robot 
         model_path = os.path.expanduser(
             "~/unitree_rl_gym/resources/robots/g1_description/scene.xml"
         )
-
+        # seperate robot configurations
         self.model = mujoco.MjModel.from_xml_path(model_path)
         self.data = mujoco.MjData(self.model)
+        #Measure ankle seprations and foot positions
         self.foot_ids = [self.model.body(f"{side}_ankle_roll_link").id
                          for side in ("left", "right")]
         reference = mujoco.MjData(self.model)
@@ -30,7 +34,8 @@ class G1Env(gym.Env):
         self.width_penalty_weight = width_penalty_weight
         self.width_data = mujoco.MjData(self.model)
 
-        # ----- low-level controller -----
+        #Controller to set joint stiffness
+        # Higher values are more stiff (needed since robot kept vibrating)
 
         self.kp = np.array([
             100, 100, 100, 150, 40, 40,
@@ -41,7 +46,8 @@ class G1Env(gym.Env):
             2, 2, 2, 4, 2, 2,
             2, 2, 2, 4, 2, 2
         ], dtype=np.float64)
-        # Temporary diagnostic: change only the ankle-pitch gains.
+        
+        # ankle-pitch stiffness incrreased for experiment
         self.kp[[4, 10]] = 80.0   # previously 40
         self.kd[[4, 10]] = 4.0    # previously 2
 
@@ -49,18 +55,21 @@ class G1Env(gym.Env):
 
         self.action_scale = 0.25
 
-        # 500 Hz physics → 50 Hz policy
+        # Run 10 physics steps for each policy action
+        # allows fast control 
         self.decimation = 10
 
-        # ----- RL spaces -----
-
+        # Spaces
+        
+        #12 actions between -1 and 1 for each controlled joint
         self.action_space = spaces.Box(
             low=-1.0,
             high=1.0,
             shape=(12,),
             dtype=np.float32
         )
-
+        
+        # 48 numbers for ppo for robot state
         self.observation_space = spaces.Box(
             low=-np.inf,
             high=np.inf,
@@ -73,10 +82,11 @@ class G1Env(gym.Env):
         # Desired [vx, vy, yaw rate]
         self.command = np.array([0.0, 0.0, 0.0])
 
+        #converts to max policy steps
         self.max_episode_steps = int(np.ceil(episode_seconds / (self.model.opt.timestep * self.decimation)))
         self.step_count = 0
     
-    
+    #collect velocity, orientation info, joint state, and prev action
     def _get_observation(self):
 
         base_ang_vel = self.data.qvel[3:6].copy()
@@ -110,10 +120,9 @@ class G1Env(gym.Env):
         ])
 
         return obs.astype(np.float32)
-    
+    #apply the controls to simulate the physical movement
     def step(self, action):
         
-
         action = np.clip(action, -1.0, 1.0)
 
         target_q = (
@@ -124,7 +133,7 @@ class G1Env(gym.Env):
         torque_squared_sum = 0.0
 
         for _ in range(self.decimation):
-
+            # read joint positions and elocites and calcult torque requests
             q = self.data.qpos[7:19]
             dq = self.data.qvel[6:18]
 
@@ -141,18 +150,19 @@ class G1Env(gym.Env):
                 self.model,
                 self.data
             )
-
+        # action penaltiy to reduce jittering (abrupt target changes) (big issue when holding state)
         action_rate_penalty = np.sum((action - self.previous_action) ** 2)
         self.previous_action = action.copy()
 
         obs = self._get_observation()
 
         projected_gravity = obs[6:9]
+        # promote upright staying torso
         upright_reward = max(0.0, -projected_gravity[2])
 
         self.step_count += 1
         
-        # Track commanded velocity in the body frame
+        # track  velocity in the body frame
         quat = self.data.qpos[3:7].copy()
         rot = np.zeros(9)
         mujoco.mju_quat2Mat(rot, quat)
@@ -168,6 +178,8 @@ class G1Env(gym.Env):
         target_vy = self.command[1]
         target_yaw_rate = self.command[2]
 
+        #rewards standing still and slow drift recivies small penalty 
+        # this penalty should be further experimented with
         tracking_error = (
             (vx_body - target_vx) ** 2
             + (vy_body - target_vy) ** 2
@@ -178,10 +190,10 @@ class G1Env(gym.Env):
             -tracking_error / 0.25
         )
 
-        # Small reward for remaining alive
+        # small reward for remaining alive
         survival_reward = 0.2
 
-        # Penalize excessive torque
+        # penalize excessive torque (averaged)
         mean_tau_sq = (
             torque_squared_sum
             / self.decimation
@@ -208,7 +220,8 @@ class G1Env(gym.Env):
                                    - self.width_data.xpos[self.foot_ids[1], :2])
             excess = max(0.0, float(width) - self.width_limit) / self.reference_width
             width_penalty = self.width_penalty_weight * excess ** 2
-
+        # fully combined reward
+        # changed values here for experimentation
         reward = (
             1.0 * velocity_reward
             + 0.5 * upright_reward
@@ -252,31 +265,6 @@ class G1Env(gym.Env):
             info
         )
         
-    # def reset(self, seed=None, options=None):
-
-    #     super().reset(seed=seed)
-
-    #     mujoco.mj_resetData(
-    #         self.model,
-    #         self.data
-    #     )
-
-    #     # Start approximately in nominal standing posture
-    #     self.data.qpos[7:19] = self.default_q
-
-    #     self.data.qvel[:] = 0.0
-
-    #     mujoco.mj_forward(
-    #         self.model,
-    #         self.data
-    #     )
-
-    #     self.previous_action[:] = 0.0
-    #     self.step_count = 0
-
-    #     obs = self._get_observation()
-
-    #     return obs, {}
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
 
