@@ -38,6 +38,6 @@ Continue training:
 python train_ppo.py --checkpoint /path/to/model.zip --timesteps 300000
 ```
 
-## Progress and Next Steps
+## Progress 
 
 The policy has learned to stand, but gradual sideways leg spreading remains an issue. Hip-posture and foot-width penalties have been implemented; the width penalty still needs evaluation.
